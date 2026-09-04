@@ -3,6 +3,7 @@ package controller
 import (
 	"crypto/hmac"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -17,6 +18,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
@@ -67,6 +69,36 @@ func GetUserTask(c *gin.Context) {
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(tasksToDto(items, false))
 	common.ApiSuccess(c, pageInfo)
+}
+
+func CancelTask(c *gin.Context) {
+	taskID := c.Param("task_id")
+	task, exists, err := model.GetByPublicTaskId(taskID)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if !exists {
+		common.ApiErrorMsg(c, "任务不存在")
+		return
+	}
+
+	result, err := service.CancelTaskAndRefund(c.Request.Context(), task)
+	if err != nil {
+		if errors.Is(err, service.ErrTaskNotCancellable) || errors.Is(err, service.ErrTaskStateChanged) {
+			common.ApiErrorMsg(c, "任务已结束或状态已变化，请刷新后重试")
+			return
+		}
+		common.ApiError(c, err)
+		return
+	}
+
+	recordManageAuditFor(c, task.UserId, "task.cancel", map[string]interface{}{
+		"task_id":          task.TaskID,
+		"refunded_quota":   result.RefundedQuota,
+		"refund_succeeded": result.RefundSucceeded,
+	})
+	common.ApiSuccess(c, result)
 }
 
 func tasksToDto(tasks []*model.Task, fillUser bool) []*dto.TaskDto {
@@ -178,6 +210,8 @@ func diagnosticText(code string) (string, string) {
 		return "成片已生成但交付缓存不可用", "恢复原成片后重新执行交付"
 	case "delivery_review_required":
 		return "成片交付校验未通过", "检查重封装和媒体校验记录"
+	case "operator_cancelled":
+		return "任务已由管理员取消", "退款状态已在本任务详情中记录"
 	default:
 		return "上游明确返回视频生成失败", "无需重新提交；确认退款已到账"
 	}

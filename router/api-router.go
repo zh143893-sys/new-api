@@ -329,6 +329,7 @@ func SetApiRouter(router *gin.Engine) {
 			taskRoute.GET("/preview/:task_id", controller.ServeTaskPreview)
 			taskRoute.GET("/self", middleware.UserAuth(), controller.GetUserTask)
 			taskRoute.GET("/", middleware.AdminAuth(), controller.GetAllTask)
+			taskRoute.POST("/:task_id/cancel", middleware.AdminAuth(), controller.CancelTask)
 			taskRoute.POST("/:task_id/preview", middleware.AdminAuth(), controller.MintTaskPreview)
 		}
 

@@ -121,3 +121,16 @@ export async function getTaskPreviewUrl(
   )
   return res.data
 }
+
+export async function cancelAsyncTask(taskId: string): Promise<{
+  success: boolean
+  message?: string
+  data?: { refunded_quota: number; refund_succeeded: boolean }
+}> {
+  const res = await api.post(
+    `/api/task/${encodeURIComponent(taskId)}/cancel`,
+    undefined,
+    { skipErrorHandler: true }
+  )
+  return res.data
+}

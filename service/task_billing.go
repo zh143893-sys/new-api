@@ -2,8 +2,10 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -14,6 +16,16 @@ import (
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 )
+
+var (
+	ErrTaskNotCancellable = errors.New("task is already finished")
+	ErrTaskStateChanged   = errors.New("task state changed while cancelling")
+)
+
+type TaskCancellationResult struct {
+	RefundedQuota   int  `json:"refunded_quota"`
+	RefundSucceeded bool `json:"refund_succeeded"`
+}
 
 // LogTaskConsumption 记录任务消费日志和统计信息（仅记录，不涉及实际扣费）。
 // 实际扣费已由 BillingSession（PreConsumeBilling + SettleBilling）完成。
@@ -205,6 +217,48 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) bool 
 		logger.LogError(ctx, fmt.Sprintf("退款成功但记录 task 退款状态失败 task %s: %s", task.TaskID, err.Error()))
 	}
 	return true
+}
+
+// CancelTaskAndRefund atomically wins the task state transition before
+// refunding. A concurrent poller or repeated administrator request therefore
+// cannot refund the same task twice.
+func CancelTaskAndRefund(ctx context.Context, task *model.Task) (*TaskCancellationResult, error) {
+	switch task.Status {
+	case model.TaskStatusNotStart, model.TaskStatusSubmitted, model.TaskStatusQueued, model.TaskStatusInProgress, model.TaskStatusUnknown:
+	default:
+		return nil, ErrTaskNotCancellable
+	}
+
+	oldStatus := task.Status
+	refundableQuota := task.Quota
+	now := time.Now().Unix()
+	task.Status = model.TaskStatusFailure
+	task.Progress = "100%"
+	task.FinishTime = now
+	task.FailReason = "任务已由管理员取消"
+	task.PrivateData.Diagnostic = &model.TaskDiagnostic{
+		Code:       "operator_cancelled",
+		Stage:      "admin_operation",
+		Retryable:  false,
+		RecordedAt: now,
+	}
+
+	won, err := task.UpdateWithStatus(oldStatus)
+	if err != nil {
+		return nil, err
+	}
+	if !won {
+		return nil, ErrTaskStateChanged
+	}
+
+	result := &TaskCancellationResult{RefundSucceeded: true}
+	if refundableQuota > 0 {
+		result.RefundSucceeded = RefundTaskQuota(ctx, task, task.FailReason)
+		if result.RefundSucceeded {
+			result.RefundedQuota = refundableQuota
+		}
+	}
+	return result, nil
 }
 
 // RecalculateTaskQuota 通用的异步差额结算。

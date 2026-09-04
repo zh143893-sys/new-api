@@ -24,6 +24,7 @@ import { formatLogQuota, formatTimestampToDate } from '@/lib/format'
 
 import {
   formatAdminDiagnostic,
+  isTaskCancellable,
   TaskRefundSummary,
 } from '../task-logs-columns'
 
@@ -80,5 +81,14 @@ describe('task refund summary', () => {
     expect(text).toContain('上游 HTTP 状态：429')
     expect(text).toContain('可重试：是')
     expect(text).not.toContain('provider')
+  })
+
+  test('offers cancellation only while a task is unfinished', () => {
+    expect(isTaskCancellable('NOT_START')).toBe(true)
+    expect(isTaskCancellable('SUBMITTED')).toBe(true)
+    expect(isTaskCancellable('QUEUED')).toBe(true)
+    expect(isTaskCancellable('IN_PROGRESS')).toBe(true)
+    expect(isTaskCancellable('SUCCESS')).toBe(false)
+    expect(isTaskCancellable('FAILURE')).toBe(false)
   })
 })

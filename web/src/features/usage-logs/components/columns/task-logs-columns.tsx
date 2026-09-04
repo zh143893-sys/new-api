@@ -1,3 +1,4 @@
+import { useQueryClient } from '@tanstack/react-query'
 /*
 Copyright (C) 2023-2026 QuantumNous
 
@@ -17,21 +18,23 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import type { ColumnDef } from '@tanstack/react-table'
-import { Music, Play } from 'lucide-react'
+import { CircleX, Music, Play } from 'lucide-react'
 /* eslint-disable react-refresh/only-export-components */
 import { useState, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
+import { ConfirmDialog } from '@/components/confirm-dialog'
 import { Dialog } from '@/components/dialog'
 import { StatusBadge } from '@/components/status-badge'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { Button } from '@/components/ui/button'
 import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
 import { formatLogQuota, formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
+import { cancelAsyncTask, getTaskPreviewUrl } from '../../api'
 import { TASK_ACTIONS, TASK_STATUS } from '../../constants'
-import { getTaskPreviewUrl } from '../../api'
 import { taskActionMapper, taskStatusMapper } from '../../lib/mappers'
 import type { TaskLog } from '../../types'
 import {
@@ -170,6 +173,68 @@ export function TaskVideoPreview({ log }: { log: TaskLog }) {
           />
         ) : null}
       </Dialog>
+    </>
+  )
+}
+
+export function isTaskCancellable(status: string): boolean {
+  const cancellableStatuses: string[] = [
+    TASK_STATUS.NOT_START,
+    TASK_STATUS.SUBMITTED,
+    TASK_STATUS.QUEUED,
+    TASK_STATUS.IN_PROGRESS,
+    TASK_STATUS.UNKNOWN,
+  ]
+  return cancellableStatuses.includes(status)
+}
+
+export function TaskCancelAction({ log }: { log: TaskLog }) {
+  const { t } = useTranslation()
+  const queryClient = useQueryClient()
+  const [open, setOpen] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const actionLabel = `${t('Cancel')} / ${t('Refund')}`
+
+  async function handleCancel() {
+    setLoading(true)
+    try {
+      const result = await cancelAsyncTask(log.task_id)
+      if (!result.success || !result.data?.refund_succeeded) {
+        toast.error(result.message || t('Operation failed'))
+        return
+      }
+      toast.success(t('Operation successful'))
+      setOpen(false)
+      await queryClient.invalidateQueries({ queryKey: ['logs'] })
+    } catch {
+      toast.error(t('Operation failed'))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <>
+      <Button
+        type='button'
+        variant='outline'
+        size='sm'
+        className='h-7 gap-1 px-2 text-xs text-red-600 dark:text-red-400'
+        onClick={() => setOpen(true)}
+      >
+        <CircleX className='size-3' />
+        {actionLabel}
+      </Button>
+      <ConfirmDialog
+        open={open}
+        onOpenChange={setOpen}
+        title={actionLabel}
+        desc={`${t('Task ID')}: ${log.task_id}`}
+        confirmText={t('Confirm')}
+        destructive
+        isLoading={loading}
+        handleConfirm={() => void handleCancel()}
+      />
     </>
   )
 }
@@ -391,8 +456,8 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
 
   if (isAdmin) {
     columns.push({
-      id: 'preview',
-      header: t('Preview'),
+      id: 'operations',
+      header: t('Operations'),
       cell: ({ row }) => {
         const log = row.original
         const isVideoTask =
@@ -401,16 +466,19 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
           log.action === TASK_ACTIONS.FIRST_TAIL_GENERATE ||
           log.action === TASK_ACTIONS.REFERENCE_GENERATE ||
           log.action === TASK_ACTIONS.REMIX_GENERATE
-        if (
-          log.status !== TASK_STATUS.SUCCESS ||
-          !isVideoTask ||
-          !log.preview_available
-        ) {
-          return <span className='text-muted-foreground/60 text-xs'>-</span>
+        if (isTaskCancellable(log.status)) {
+          return <TaskCancelAction log={log} />
         }
-        return <TaskVideoPreview log={log} />
+        if (
+          log.status === TASK_STATUS.SUCCESS &&
+          isVideoTask &&
+          log.preview_available
+        ) {
+          return <TaskVideoPreview log={log} />
+        }
+        return <span className='text-muted-foreground/60 text-xs'>-</span>
       },
-      size: 150,
+      size: 170,
     })
   }
 

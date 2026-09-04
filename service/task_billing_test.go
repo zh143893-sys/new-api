@@ -20,6 +20,35 @@ import (
 	"gorm.io/gorm"
 )
 
+func TestCancelTaskAndRefundIsSingleShot(t *testing.T) {
+	truncate(t)
+	seedUser(t, 1, 900)
+	task := makeTask(1, 1, 100, 0, BillingSourceWallet, 0)
+	task.Status = model.TaskStatusQueued
+	require.NoError(t, task.Insert())
+
+	result, err := CancelTaskAndRefund(context.Background(), task)
+	require.NoError(t, err)
+	assert.True(t, result.RefundSucceeded)
+	assert.Equal(t, 100, result.RefundedQuota)
+
+	reloaded, exists, err := model.GetByPublicTaskId(task.TaskID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	assert.EqualValues(t, model.TaskStatusFailure, reloaded.Status)
+	assert.Equal(t, "100%", reloaded.Progress)
+	assert.Zero(t, reloaded.Quota)
+	assert.Equal(t, 100, reloaded.RefundedQuota)
+	require.NotNil(t, reloaded.PrivateData.Diagnostic)
+	assert.Equal(t, "operator_cancelled", reloaded.PrivateData.Diagnostic.Code)
+
+	_, err = CancelTaskAndRefund(context.Background(), reloaded)
+	assert.ErrorIs(t, err, ErrTaskNotCancellable)
+	var user model.User
+	require.NoError(t, model.DB.First(&user, 1).Error)
+	assert.Equal(t, 1000, user.Quota)
+}
+
 func TestMain(m *testing.M) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {
