@@ -200,9 +200,9 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) bool 
 
 	// 5. 资金退款完成后再清除持久化标记。
 	// 回写失败必须显式告警，避免漏掉潜在的重复退款风险。
-	task.Quota = 0
-	if err := task.UpdateQuota(); err != nil {
-		logger.LogError(ctx, fmt.Sprintf("退款成功但清除 task quota 失败 task %s: %s", task.TaskID, err.Error()))
+	refundedAt := common.GetTimestamp()
+	if err := task.MarkRefunded(quota, refundedAt); err != nil {
+		logger.LogError(ctx, fmt.Sprintf("退款成功但记录 task 退款状态失败 task %s: %s", task.TaskID, err.Error()))
 	}
 	return true
 }

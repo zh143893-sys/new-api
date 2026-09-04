@@ -17,18 +17,21 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import type { ColumnDef } from '@tanstack/react-table'
-import { Music } from 'lucide-react'
+import { Music, Play } from 'lucide-react'
 /* eslint-disable react-refresh/only-export-components */
 import { useState, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 
+import { Dialog } from '@/components/dialog'
 import { StatusBadge } from '@/components/status-badge'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
-import { formatTimestampToDate } from '@/lib/format'
+import { formatLogQuota, formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 import { TASK_ACTIONS, TASK_STATUS } from '../../constants'
+import { getTaskPreviewUrl } from '../../api'
 import { taskActionMapper, taskStatusMapper } from '../../lib/mappers'
 import type { TaskLog } from '../../types'
 import {
@@ -87,6 +90,113 @@ function AudioPreviewCell({ log }: { log: TaskLog }) {
         clips={clips as AudioClip[]}
       />
     </>
+  )
+}
+
+export function formatAdminDiagnostic(log: TaskLog): string {
+  const diagnostic = log.admin_diagnostic
+  if (!diagnostic) return log.fail_reason || ''
+
+  const lines = [
+    `原因：${diagnostic.summary}`,
+    `故障代码：${diagnostic.code}`,
+    `发生环节：${diagnostic.stage}`,
+  ]
+  if (diagnostic.upstream_http_status) {
+    lines.push(`上游 HTTP 状态：${diagnostic.upstream_http_status}`)
+  }
+  lines.push(`建议处理：${diagnostic.action}`)
+  lines.push(`可重试：${diagnostic.retryable ? '是' : '否'}`)
+  if (diagnostic.historical) {
+    lines.push('说明：历史任务未保存更细的结构化诊断')
+  }
+  return lines.join('\n')
+}
+
+export function TaskVideoPreview({ log }: { log: TaskLog }) {
+  const { t } = useTranslation()
+  const [open, setOpen] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [previewUrl, setPreviewUrl] = useState('')
+
+  async function openPreview() {
+    setLoading(true)
+    try {
+      const result = await getTaskPreviewUrl(log.task_id)
+      const url = result.data?.url
+      if (!result.success || !url) {
+        toast.error(result.message || t('Preview is unavailable'))
+        return
+      }
+      setPreviewUrl(url)
+      setOpen(true)
+    } catch {
+      toast.error(t('Preview is unavailable'))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <>
+      <button
+        type='button'
+        className='group flex items-center gap-1 text-left text-xs disabled:opacity-50'
+        disabled={loading}
+        onClick={openPreview}
+      >
+        <Play className='text-muted-foreground size-3' />
+        <span className='text-foreground leading-snug group-hover:underline'>
+          {loading ? t('Loading...') : t('Click to preview video')}
+        </span>
+      </button>
+      <Dialog
+        open={open}
+        onOpenChange={(next) => {
+          setOpen(next)
+          if (!next) setPreviewUrl('')
+        }}
+        title={t('Video Preview')}
+        description={log.task_id}
+        contentClassName='sm:max-w-4xl'
+        contentHeight='auto'
+      >
+        {previewUrl ? (
+          <video
+            className='max-h-[70vh] w-full rounded-md bg-black'
+            controls
+            preload='metadata'
+            src={previewUrl}
+          />
+        ) : null}
+      </Dialog>
+    </>
+  )
+}
+
+export function TaskRefundSummary(props: {
+  refundedQuota: number
+  refundedAt?: number
+}) {
+  const { t } = useTranslation()
+
+  return (
+    <div className='flex flex-col items-start gap-0.5'>
+      <StatusBadge
+        label={t('Refunded {{amount}}', {
+          amount: formatLogQuota(props.refundedQuota),
+        })}
+        variant='success'
+        size='sm'
+        copyable={false}
+      />
+      {props.refundedAt ? (
+        <span className='text-muted-foreground/70 text-[11px] tabular-nums'>
+          {t('Refund Time')}:{' '}
+          {formatTimestampToDate(props.refundedAt, 'seconds')}
+        </span>
+      ) : null}
+    </div>
   )
 }
 
@@ -220,7 +330,9 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
         const log = row.original
         const failReason = row.getValue('fail_reason') as string
         const status = log.status
+        const refundedQuota = log.refunded_quota ?? 0
         const [dialogOpen, setDialogOpen] = useState(false)
+        const diagnosticText = isAdmin ? formatAdminDiagnostic(log) : ''
 
         const isSunoSuccess =
           log.platform === 'suno' && status === TASK_STATUS.SUCCESS
@@ -238,57 +350,69 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
           }
         }
 
+        if (!failReason && !diagnosticText && refundedQuota <= 0) {
+          return <span className='text-muted-foreground/60 text-xs'>-</span>
+        }
+
+        return (
+          <div className='flex max-w-[240px] flex-col items-start gap-1'>
+            {refundedQuota > 0 ? (
+              <TaskRefundSummary
+                refundedQuota={refundedQuota}
+                refundedAt={log.refunded_at}
+              />
+            ) : null}
+            {failReason || diagnosticText ? (
+              <>
+                <button
+                  type='button'
+                  className='group flex max-w-full items-center gap-1 text-left text-xs'
+                  onClick={() => setDialogOpen(true)}
+                  title={t('Click to view full error message')}
+                >
+                  <span className='truncate leading-snug text-red-600 group-hover:underline dark:text-red-400'>
+                    {log.admin_diagnostic?.summary || failReason}
+                  </span>
+                </button>
+                <FailReasonDialog
+                  failReason={diagnosticText || failReason}
+                  open={dialogOpen}
+                  onOpenChange={setDialogOpen}
+                />
+              </>
+            ) : null}
+          </div>
+        )
+      },
+      size: 240,
+      maxSize: 260,
+    }
+  )
+
+  if (isAdmin) {
+    columns.push({
+      id: 'preview',
+      header: t('Preview'),
+      cell: ({ row }) => {
+        const log = row.original
         const isVideoTask =
           log.action === TASK_ACTIONS.GENERATE ||
           log.action === TASK_ACTIONS.TEXT_GENERATE ||
           log.action === TASK_ACTIONS.FIRST_TAIL_GENERATE ||
           log.action === TASK_ACTIONS.REFERENCE_GENERATE ||
           log.action === TASK_ACTIONS.REMIX_GENERATE
-        const isSuccess = status === TASK_STATUS.SUCCESS
-        const isUrl = failReason?.startsWith('http')
-
-        if (isSuccess && isVideoTask && isUrl) {
-          const videoUrl = `/v1/videos/${log.task_id}/content`
-          return (
-            <a
-              href={videoUrl}
-              target='_blank'
-              rel='noopener noreferrer'
-              className='text-foreground text-xs hover:underline'
-            >
-              {t('Click to preview video')}
-            </a>
-          )
-        }
-
-        if (!failReason) {
+        if (
+          log.status !== TASK_STATUS.SUCCESS ||
+          !isVideoTask ||
+          !log.preview_available
+        ) {
           return <span className='text-muted-foreground/60 text-xs'>-</span>
         }
-
-        return (
-          <>
-            <button
-              type='button'
-              className='group flex max-w-[200px] items-center gap-1 text-left text-xs'
-              onClick={() => setDialogOpen(true)}
-              title={t('Click to view full error message')}
-            >
-              <span className='truncate leading-snug text-red-600 group-hover:underline dark:text-red-400'>
-                {failReason}
-              </span>
-            </button>
-            <FailReasonDialog
-              failReason={failReason}
-              open={dialogOpen}
-              onOpenChange={setDialogOpen}
-            />
-          </>
-        )
+        return <TaskVideoPreview log={log} />
       },
-      size: 200,
-      maxSize: 220,
-    }
-  )
+      size: 150,
+    })
+  }
 
   return columns
 }

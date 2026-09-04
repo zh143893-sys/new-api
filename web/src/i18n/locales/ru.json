@@ -3764,6 +3764,8 @@
     "Refreshing...": "Обновление...",
     "Refund": "Возврат",
     "Refund Details": "Детали возврата",
+    "Refund Time": "Время возврата",
+    "Refunded {{amount}}": "Возвращено {{amount}}",
     "Regenerate": "Перегенерировать",
     "Regenerate access token?": "Перегенерировать токен доступа?",
     "Regenerate Backup Codes": "Сгенерировать резервные коды",

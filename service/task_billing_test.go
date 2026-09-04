@@ -307,6 +307,13 @@ func getTaskQuota(t *testing.T, id int64) int {
 	return task.Quota
 }
 
+func getTask(t *testing.T, id int64) model.Task {
+	t.Helper()
+	var task model.Task
+	require.NoError(t, model.DB.First(&task, id).Error)
+	return task
+}
+
 func getMidjourneyTask(t *testing.T, id int) model.Midjourney {
 	t.Helper()
 	var task model.Midjourney
@@ -656,7 +663,10 @@ func TestRefundTaskQuota_Wallet(t *testing.T) {
 	assert.Equal(t, preConsumed, log.Quota)
 	assert.Equal(t, "test-model", log.ModelName)
 	assert.Zero(t, task.Quota)
-	assert.Zero(t, getTaskQuota(t, task.ID))
+	persisted := getTask(t, task.ID)
+	assert.Zero(t, persisted.Quota)
+	assert.Equal(t, preConsumed, persisted.RefundedQuota)
+	assert.Positive(t, persisted.RefundedAt)
 }
 
 func TestRefundTaskQuota_Subscription(t *testing.T) {

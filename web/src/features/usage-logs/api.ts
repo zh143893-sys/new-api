@@ -110,3 +110,14 @@ export const getAllTaskLogs = (params: GetTaskLogsParams) =>
 
 export const getUserTaskLogs = (params: GetTaskLogsParams) =>
   fetchLogs('/api/task', params, false)
+
+export async function getTaskPreviewUrl(
+  taskId: string
+): Promise<{ success: boolean; message?: string; data?: { url: string } }> {
+  const res = await api.post(
+    `/api/task/${encodeURIComponent(taskId)}/preview`,
+    undefined,
+    { skipErrorHandler: true }
+  )
+  return res.data
+}

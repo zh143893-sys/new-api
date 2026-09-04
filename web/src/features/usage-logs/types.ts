@@ -295,6 +295,11 @@ export interface TaskLog {
   task_id: string
   action: string // MUSIC, LYRICS, GENERATE, TEXT_GENERATE, etc.
   channel_id: number
+  quota?: number
+  refunded_quota?: number
+  refunded_at?: number
+  admin_diagnostic?: TaskAdminDiagnostic
+  preview_available?: boolean
   submit_time: number // seconds
   finish_time?: number // seconds
   progress?: string
@@ -305,6 +310,17 @@ export interface TaskLog {
   other?: string
   created_at?: number
   updated_at?: number
+}
+
+export interface TaskAdminDiagnostic {
+  code: string
+  stage: string
+  summary: string
+  action: string
+  upstream_http_status?: number
+  retryable: boolean
+  recorded_at?: number
+  historical?: boolean
 }
 
 // ============================================================================

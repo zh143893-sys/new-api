@@ -3764,6 +3764,8 @@
     "Refreshing...": "重新整理中...",
     "Refund": "退款",
     "Refund Details": "退款詳情",
+    "Refund Time": "退款時間",
+    "Refunded {{amount}}": "已退還 {{amount}}",
     "Regenerate": "重新生成",
     "Regenerate access token?": "重新生成存取令牌？",
     "Regenerate Backup Codes": "重新生成備用代碼",

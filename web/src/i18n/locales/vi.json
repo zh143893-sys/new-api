@@ -3764,6 +3764,8 @@
     "Refreshing...": "Đang làm mới...",
     "Refund": "Hoàn tiền",
     "Refund Details": "Chi tiết hoàn tiền",
+    "Refund Time": "Thời gian hoàn tiền",
+    "Refunded {{amount}}": "Đã hoàn {{amount}}",
     "Regenerate": "Tạo lại",
     "Regenerate access token?": "Tạo lại token truy cập?",
     "Regenerate Backup Codes": "Tạo lại Mã dự phòng",

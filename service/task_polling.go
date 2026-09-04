@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -70,6 +71,9 @@ func sweepTimedOutTasks(ctx context.Context) {
 			task.Quota = 0
 		} else {
 			task.FailReason = reason
+		}
+		task.PrivateData.Diagnostic = &model.TaskDiagnostic{
+			Code: "upstream_queue_timeout", Stage: "polling", Retryable: true, RecordedAt: now,
 		}
 
 		won, err := task.UpdateWithStatus(oldStatus)
@@ -475,6 +479,10 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	logger.LogDebug(ctx, "updateVideoSingleTask response: %s", responseBody)
 
 	snap := task.Snapshot()
+	diagnostic := taskDiagnosticFromResponse(resp, responseBody)
+	if diagnostic != nil {
+		task.PrivateData.Diagnostic = diagnostic
+	}
 
 	taskResult := &relaycommon.TaskInfo{}
 	// try parse as New API response format
@@ -527,15 +535,25 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	switch taskResult.Status {
 	case model.TaskStatusSubmitted:
 		task.Progress = taskcommon.ProgressSubmitted
+		if diagnostic == nil {
+			task.PrivateData.Diagnostic = nil
+		}
 	case model.TaskStatusQueued:
 		task.Progress = taskcommon.ProgressQueued
+		if diagnostic == nil {
+			task.PrivateData.Diagnostic = nil
+		}
 	case model.TaskStatusInProgress:
 		task.Progress = taskcommon.ProgressInProgress
+		if diagnostic == nil {
+			task.PrivateData.Diagnostic = nil
+		}
 		if task.StartTime == 0 {
 			task.StartTime = now
 		}
 	case model.TaskStatusSuccess:
 		task.Progress = taskcommon.ProgressComplete
+		task.PrivateData.Diagnostic = nil
 		if task.FinishTime == 0 {
 			task.FinishTime = now
 		}
@@ -558,6 +576,11 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 			task.FinishTime = now
 		}
 		task.FailReason = taskResult.Reason
+		if task.PrivateData.Diagnostic == nil {
+			task.PrivateData.Diagnostic = &model.TaskDiagnostic{
+				Code: "generation_failed", Stage: "upstream_generation", RecordedAt: now,
+			}
+		}
 		logger.LogInfo(ctx, fmt.Sprintf("Task %s failed: %s", task.TaskID, task.FailReason))
 		taskResult.Progress = taskcommon.ProgressComplete
 		if quota != 0 {
@@ -599,6 +622,48 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	}
 
 	return nil
+}
+
+func taskDiagnosticFromResponse(resp *http.Response, body []byte) *model.TaskDiagnostic {
+	if resp == nil {
+		return nil
+	}
+	code := strings.ToLower(strings.TrimSpace(resp.Header.Get("X-Haomao-Diagnostic-Code")))
+	stage := strings.ToLower(strings.TrimSpace(resp.Header.Get("X-Haomao-Diagnostic-Stage")))
+	upstreamStatus, _ := strconv.Atoi(resp.Header.Get("X-Haomao-Upstream-Status"))
+	if code == "" {
+		var value map[string]any
+		if common.Unmarshal(body, &value) == nil {
+			if errorValue, ok := value["error"].(map[string]any); ok {
+				code, _ = errorValue["code"].(string)
+				code = strings.ToLower(strings.TrimSpace(code))
+			}
+		}
+	}
+	if !validTaskDiagnosticCode(code) {
+		return nil
+	}
+	if stage != "upstream_submit" && stage != "upstream_poll" && stage != "upstream_generation" && stage != "delivery" && stage != "polling" {
+		stage = "upstream_generation"
+	}
+	if upstreamStatus < 400 || upstreamStatus > 599 {
+		upstreamStatus = 0
+	}
+	return &model.TaskDiagnostic{
+		Code: code, Stage: stage, UpstreamHTTPStatus: upstreamStatus,
+		Retryable:  code == "upstream_rate_limited" || code == "upstream_busy" || code == "upstream_transport_error" || code == "upstream_poll_unavailable",
+		RecordedAt: time.Now().Unix(),
+	}
+}
+
+func validTaskDiagnosticCode(code string) bool {
+	switch code {
+	case "upstream_balance_insufficient", "upstream_auth_failed", "upstream_rate_limited", "upstream_busy",
+		"upstream_rejected", "upstream_transport_error", "upstream_poll_unavailable", "upstream_unavailable",
+		"generation_failed", "submission_unconfirmed", "asset_unavailable", "delivery_review_required":
+		return true
+	}
+	return false
 }
 
 func redactVideoResponseBody(body []byte) []byte {

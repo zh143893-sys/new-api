@@ -1,8 +1,10 @@
 package middleware
 
 import (
+	"crypto/subtle"
 	"net/http"
 	"net/url"
+	"os"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/gin-gonic/gin"
@@ -12,9 +14,23 @@ type turnstileCheckResponse struct {
 	Success bool `json:"success"`
 }
 
+const consoleLoginSecretHeader = "X-Console-Login-Secret"
+
+func trustedConsoleLogin(c *gin.Context) bool {
+	if c.Request.Method != http.MethodPost || c.Request.URL.Path != "/api/user/login" {
+		return false
+	}
+	serverSecret := os.Getenv("CONSOLE_LOGIN_SHARED_SECRET")
+	if len(serverSecret) < 32 {
+		return false
+	}
+	requestSecret := c.GetHeader(consoleLoginSecretHeader)
+	return subtle.ConstantTimeCompare([]byte(requestSecret), []byte(serverSecret)) == 1
+}
+
 func TurnstileCheck() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if common.TurnstileCheckEnabled {
+		if common.TurnstileCheckEnabled && !trustedConsoleLogin(c) {
 			response := c.Query("turnstile")
 			if response == "" {
 				c.JSON(http.StatusOK, gin.H{
